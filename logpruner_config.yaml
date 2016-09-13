@@ -1,0 +1,23 @@
+---
+
+# Example configuration file for logpruner command.
+# This file MUST be named 'logpruner_config.yaml' and MUST be placed into '/etc/logpruner' directory.
+# All supported values are described below. However, the two boolean values 'use_SSL' and 'ssl_validation' are optional.
+# The top level key MUST be named 'es_indexes'.
+
+es_indexes:
+
+  examplelogs:
+
+	# The name of the CloudWatch alarm. The alarm itself MUST be defined in AWS first!
+    alarm_name: free-space::example-logs
+    # The ElasticSearch Service endpoint host name as defined in AWS.
+	host: example.org
+    # The ElasticSearch Service endpoint port as defined in AWS.
+	port: 123
+	# Delete ElasticSearch indexes older than <this value> days (here: 5). 
+    older_than_days: 5
+	# Should the ElasticSearch curator tool use SSL to connect to the ElasticSearch Service endpoint?
+	use_SSL: True
+	# Should the ElasticSearch curator tool validate the SSL cert when connecting to the ElasticSearch Service endpoint?
+    ssl_validation: False
