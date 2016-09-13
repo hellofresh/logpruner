@@ -114,7 +114,6 @@ func (lpc LogprunerCfg) renderForCuratorDeleteIndexAction() string {
 		}
 	}
 	res = res + fmt.Sprintf(" delete indices --older-than %d --time-unit days", lpc.OlderThanDays)
-
 	res = res + " " + "--timestring '%Y.%m.%d'"
 	return res
 }
@@ -256,6 +255,8 @@ func main() {
 						} else {
 							log.Printf("Successfully deleted old indexes for '%s' at host '%s', port %d.\n", idxName, lpCfg.Host, lpCfg.Port)
 						}
+					} else {
+						log.Printf("Nothing to do for '%s' at host '%s', port %d.\n", idxName, lpCfg.Host, lpCfg.Port)
 					}
 				}
 
