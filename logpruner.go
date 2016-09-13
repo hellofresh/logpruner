@@ -22,6 +22,9 @@ func (d debugging) Printf(format string, args ...interface{}) {
 	}
 }
 
+// The Docker image to run.
+const DOCKER_IMAGE_TO_RUN string = "my/logpruner:0.0.1"
+
 // Struct to hold the ClouWatch describe-alarms JSON response.
 // Generated via JSONGen (https://github.com/bemasher/JSONGen).
 type AlarmFreeLogSpace struct {
@@ -65,8 +68,16 @@ type LogprunerCfg struct {
 	SSLValidation bool `mapstructure:"ssl_validation"`
 }
 
-// Make sure there is a logpruner config to use.
+// Check if we are operable at all.
 func init() {
+	// Environment vars check.
+	envVarsToChk := []string{"AWS_DEFAULT_REGION", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"}
+	for _, ev := range envVarsToChk {
+		if _, err := getEnvVarOrErr(ev); err != nil {
+			log.Fatalf("Error: %s. Exiting now.\n", err.Error())
+		}
+	}
+	// Config file check.
 	configDir := "/etc/logpruner"
 	if _, err := os.Stat(configDir); err != nil {
 		if os.IsNotExist(err) {
@@ -85,7 +96,37 @@ func init() {
 	if err != nil {                         // Handle errors reading the config file
 		log.Fatalf("Error: Unable to read config file: %s", err.Error())
 	}
+}
 
+// Helper function spitting out the CLI syntax for ES curator.
+func (lpc LogprunerCfg) renderForCuratorDeleteIndexAction() string {
+	// curator --host ess-endpoint.live.hellofresh.io --port 82 delete indices --older-than 5 --time-unit days --timestring '%%Y.%%m.%d'
+	res := "curator "
+	res = res + fmt.Sprintf("--host %s --port %d",
+		lpc.Host,
+		lpc.Port)
+	// Handle boolean values.
+	if lpc.UseSSL {
+		res = res + " --use_ssl"
+		// Per default SSL validation happens.
+		if !lpc.SSLValidation {
+			res = res + " --ssl-no-validate"
+		}
+	}
+	res = res + fmt.Sprintf(" delete indices --older-than %d --time-unit days", lpc.OlderThanDays)
+
+	res = res + " " + "--timestring '%Y.%m.%d'"
+	return res
+}
+
+// Helper function to retrieve the value of an OS environment variable. If not set or empty, return error.
+func getEnvVarOrErr(varName string) (string, error) {
+	switch envVar := os.Getenv(varName); envVar {
+	case "":
+		return "", fmt.Errorf("Required environment variable '%s' unset or empty.\n", varName)
+	default:
+		return envVar, nil
+	}
 }
 
 // Read the config values into typed struct values.
@@ -120,6 +161,7 @@ func getCloudWatchAlarm(alarmName string) (string, error) {
 
 	cmd := exec.Command("docker",
 		"run",
+		"--rm",
 		"-e",
 		fmt.Sprintf("AWS_DEFAULT_REGION=%s", os.Getenv("AWS_DEFAULT_REGION")),
 		"-e",
@@ -127,7 +169,7 @@ func getCloudWatchAlarm(alarmName string) (string, error) {
 		"-e",
 		fmt.Sprintf("AWS_SECRET_ACCESS_KEY=%s", os.Getenv("AWS_SECRET_ACCESS_KEY")),
 		"-i",
-		"my/logpruner:2016-09-12",
+		DOCKER_IMAGE_TO_RUN,
 		// Because the ENTRYPOINT of the Docker image to run is already "/bin/sh" we only have to provide "-c" here
 		// to read the commands to execute from the command line.
 		"-c",
@@ -136,6 +178,35 @@ func getCloudWatchAlarm(alarmName string) (string, error) {
 		return "", fmt.Errorf("(getCloudWatchAlarm) >>  Error executing docker run cmd. Error: %s\n", err.Error())
 	}
 	return cmdStdoutPipeBuffer.String(), nil
+}
+
+// Uses ElasticSearch curator tool to delete old indexes.
+func deleteESIndex(logrunerCfg *LogprunerCfg) error {
+	d := deputy.Deputy{
+		Errors:  deputy.FromStderr,
+		Timeout: time.Second * 120,
+	}
+	cmd := exec.Command("docker",
+		"run",
+		"--rm",
+		"-e",
+		fmt.Sprintf("AWS_DEFAULT_REGION=%s", os.Getenv("AWS_DEFAULT_REGION")),
+		"-e",
+		fmt.Sprintf("AWS_ACCESS_KEY_ID=%s", os.Getenv("AWS_ACCESS_KEY_ID")),
+		"-e",
+		fmt.Sprintf("AWS_SECRET_ACCESS_KEY=%s", os.Getenv("AWS_SECRET_ACCESS_KEY")),
+		"-i",
+		DOCKER_IMAGE_TO_RUN,
+		// Because the ENTRYPOINT of the Docker image to run is already "/bin/sh" we only have to provide "-c" here
+		// to read the commands to execute from the command line.
+		"-c",
+		logrunerCfg.renderForCuratorDeleteIndexAction())
+
+	debug.Printf("(deleteESIndex)  'cmd': %v\n", cmd.Args)
+	if err := d.Run(cmd); err != nil {
+		return fmt.Errorf("(deleteESIndex) >>  Error executing docker run cmd. Error: %s\n", err.Error())
+	}
+	return nil
 }
 
 func isDeleteActionRequired(alarmDesc *AlarmFreeLogSpace) (bool, error) {
@@ -155,28 +226,37 @@ func main() {
 		log.Fatalf(err.Error())
 	} else {
 		// Print collected config values.
-		for k, v := range cfgVals {
-			fmt.Printf("==> Retrieving alarm values for index: '%s' and alarm name: '%s'\n", k, v.AlarmName)
+		for idxName, lpCfg := range cfgVals {
+			fmt.Printf("==> Retrieving alarm values for index: '%s' and alarm name: '%s'\n", idxName, lpCfg.AlarmName)
 			debug.Printf("============================================================\n")
-			debug.Printf("    %#v\n", v)
+			debug.Printf("    %#v\n", lpCfg)
 			debug.Printf("============================================================\n")
-			cloudWatchAlarmJSON, err := getCloudWatchAlarm(v.AlarmName)
+			cloudWatchAlarmJSON, err := getCloudWatchAlarm(lpCfg.AlarmName)
 			if err != nil {
 				log.Println(err.Error())
 			} else {
-				fmt.Printf("cloudWatchAlarm: '%s'\n", cloudWatchAlarmJSON)
+				debug.Printf("cloudWatchAlarm: '%s'\n", cloudWatchAlarmJSON)
 				var alarmDesc AlarmFreeLogSpace
 
 				if err := json.Unmarshal([]byte(cloudWatchAlarmJSON), &alarmDesc); err != nil {
-					log.Printf("Error unmarshalling AWS CloudWatch response JSON: %s\n", err.Error())
+					log.Fatalf("Error unmarshalling AWS CloudWatch response JSON: %s\n", err.Error())
 				}
-				fmt.Printf("AlarmName: '%s'\n", alarmDesc.MetricAlarms[0].AlarmName)
-				fmt.Printf("AlarmArn: '%s'\n", alarmDesc.MetricAlarms[0].AlarmArn)
-				fmt.Printf("StateValue: '%s'\n", alarmDesc.MetricAlarms[0].StateValue)
+				log.Printf("AlarmName: '%s'\n", alarmDesc.MetricAlarms[0].AlarmName)
+				log.Printf("AlarmArn: '%s'\n", alarmDesc.MetricAlarms[0].AlarmArn)
+				log.Printf("StateValue: '%s'\n", alarmDesc.MetricAlarms[0].StateValue)
 				if delActnReq, err := isDeleteActionRequired(&alarmDesc); err != nil {
 					log.Fatalf(err.Error())
 				} else {
-					debug.Printf("***  DELETE ACTION REQUIRED? %t  ***\n\n", delActnReq)
+					debug.Printf("***  DELETE ACTION REQUIRED? %t  ***", delActnReq)
+					// Let's delete some old ElasticSearch indexes.
+					if delActnReq {
+						log.Printf(">>>  TRIGGERING DELETE OLD INDEXES ACTION for index '%s'  <<<", idxName)
+						if err := deleteESIndex(lpCfg); err != nil {
+							log.Printf("Could not delete old indexes for '%s' at host '%s', port %d. Error: %s\n", idxName, lpCfg.Host, lpCfg.Port, err.Error())
+						} else {
+							log.Printf("Successfully deleted old indexes for '%s' at host '%s', port %d.\n", idxName, lpCfg.Host, lpCfg.Port)
+						}
+					}
 				}
 
 			}
