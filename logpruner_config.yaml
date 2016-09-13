@@ -2,8 +2,12 @@
 
 # Example configuration file for logpruner command.
 # This file MUST be named 'logpruner_config.yaml' and MUST be placed into '/etc/logpruner' directory.
-# All supported values are described below. However, the two boolean values 'use_SSL' and 'ssl_validation' are optional.
-# The top level key MUST be named 'es_indexes'.
+# All supported values are described below. However, the two 3rd level boolean keys 'use_SSL' and 'ssl_validation' are optional.
+# There are two top level keys: 'statsd_addr' and 'es_indexes'. If 'statsd_addr' is not defined, no metrics will be published
+# but the logpruner tool will still work.
+# The 'es_indexes' map contains all the ElasticSearch indexes we want eventually delete.
+
+statsd_addr: statsd-host:8125
 
 es_indexes:
 

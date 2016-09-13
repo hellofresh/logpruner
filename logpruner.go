@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/juju/deputy"
+	"github.com/peterbourgon/g2s"
 	"github.com/spf13/viper"
 	"log"
 	"os"
@@ -68,6 +69,9 @@ type LogprunerCfg struct {
 	SSLValidation bool `mapstructure:"ssl_validation"`
 }
 
+// The StatsD client for publishing metrics.
+var statsd *g2s.Statsd = nil
+
 // Check if we are operable at all.
 func init() {
 	// Environment vars check.
@@ -95,6 +99,29 @@ func init() {
 	err := viper.ReadInConfig()             // Find and read the config file
 	if err != nil {                         // Handle errors reading the config file
 		log.Fatalf("Error: Unable to read config file: %s", err.Error())
+	}
+	// Publish metrics via StatsD. If there is no 'statsd_addr' field in the config file, we don't.
+	if viper.IsSet("statsd_addr") {
+		// Check if there is a value for the key.
+		statsdAddr := viper.GetString("statsd_addr")
+		if statsdAddr != "" {
+			s, err := g2s.Dial("udp", statsdAddr)
+			if err != nil {
+				log.Printf("WARNING: Unable to connect to StatsD host '%s'; error: %s. *Not* publishing metrics but running anyway.\n", statsdAddr, err.Error())
+			} else {
+				// Bind new StatsD client to global var.
+				statsd = s
+			}
+		}
+	}
+
+}
+
+// Helper function for publishing counter metrics to StatsD.
+func incrStatsDCounterBy1(statsd *g2s.Statsd, counterName string) {
+	// Only do something if we have a valid client.
+	if statsd != nil {
+		statsd.Counter(1.0, counterName, 1)
 	}
 }
 
@@ -252,11 +279,14 @@ func main() {
 						log.Printf(">>>  TRIGGERING DELETE OLD INDEXES ACTION for index '%s'  <<<", idxName)
 						if err := deleteESIndex(lpCfg); err != nil {
 							log.Printf("Could not delete old indexes for '%s' at host '%s', port %d. Error: %s\n", idxName, lpCfg.Host, lpCfg.Port, err.Error())
+							incrStatsDCounterBy1(statsd, "logpruner.error.cnt")
 						} else {
 							log.Printf("Successfully deleted old indexes for '%s' at host '%s', port %d.\n", idxName, lpCfg.Host, lpCfg.Port)
+							incrStatsDCounterBy1(statsd, "logpruner.success.cnt")
 						}
 					} else {
 						log.Printf("Nothing to do for '%s' at host '%s', port %d.\n", idxName, lpCfg.Host, lpCfg.Port)
+						incrStatsDCounterBy1(statsd, "logpruner.nothing.cnt")
 					}
 				}
 
