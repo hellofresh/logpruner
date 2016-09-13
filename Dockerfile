@@ -20,3 +20,9 @@ RUN apt-get update && apt-get install -y python-pip && \
 # already part of phusion/baseimage-docker.
 
 CMD ["/sbin/my_init"]
+
+
+COPY logpruner /logpruner
+
+COPY docker-resources/supervise/go-sqsd/go-sqsd_service.sh /etc/service/go-sqsd/run
+COPY docker-resources/supervise/logpruner/logpruner_service.sh /etc/service/logpruner/run
