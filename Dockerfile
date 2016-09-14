@@ -17,6 +17,9 @@ RUN apk add --update --no-cache \
 # Put logpruner utility into place. Use GitHub release version.
 ADD ["https://github.com/hellofresh/logpruner/releases/download/v0.0.2/logpruner", "/usr/local/bin/logpruner"]
 
+# Make sure logpruner is executable.
+RUN chmod +x /usr/local/bin/logpruner
+
 # Allow mounting of logpruner_config.yaml file into container.
 VOLUME ["/etc/logpruner"]
 
