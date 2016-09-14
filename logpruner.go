@@ -10,7 +10,6 @@ import (
 	"log"
 	"os"
 	"os/exec"
-	"strings"
 	"time"
 )
 
@@ -127,10 +126,8 @@ func incrStatsDCounterBy1(statsd *g2s.Statsd, counterName string) {
 }
 
 // Helper function spitting out the CLI syntax for ES curator.
-func (lpc LogprunerCfg) renderForCuratorDeleteIndexAction() []string {
-	// curator --host ess-endpoint.live.hellofresh.io --port 82 delete indices --older-than 5 --time-unit days --timestring '%%Y.%%m.%d'
-	//	res := "curator "
-	res := ""
+func (lpc LogprunerCfg) renderForCuratorDeleteIndexAction() string {
+	res := "/usr/bin/curator "
 	res = res + fmt.Sprintf("--host %s --port %d",
 		lpc.Host,
 		lpc.Port)
@@ -145,9 +142,7 @@ func (lpc LogprunerCfg) renderForCuratorDeleteIndexAction() []string {
 	res = res + fmt.Sprintf(" delete indices --older-than %d --time-unit days", lpc.OlderThanDays)
 	res = res + " " + "--timestring '%Y.%m.%d'"
 	// Transform to be used as 'exec.Command' arg.
-	resSpltd := strings.Split(res, " ")
-	//	resTrnsfrmd := strings.Join(resSpltd, ",")
-	return resSpltd
+	return res
 }
 
 // Helper function to retrieve the value of an OS environment variable. If not set or empty, return error.
@@ -190,11 +185,8 @@ func getCloudWatchAlarm(alarmName string) (string, error) {
 		Timeout: time.Second * 30,
 	}
 
-	cmd := exec.Command("aws",
-		"cloudwatch",
-		"describe-alarms",
-		"--alarm-names",
-		alarmName)
+	cmd := exec.Command("/bin/sh", "-c",
+		fmt.Sprintf("aws cloudwatch describe-alarms --alarm-names %s", alarmName))
 	if err := d.Run(cmd); err != nil {
 		return "", fmt.Errorf("(getCloudWatchAlarm) >>  Error executing docker run cmd. Error: %s\n", err.Error())
 	}
@@ -207,7 +199,9 @@ func deleteESIndex(logrunerCfg *LogprunerCfg) error {
 		Errors:  deputy.FromStderr,
 		Timeout: time.Second * 300,
 	}
-	cmd := exec.Command("curator", logrunerCfg.renderForCuratorDeleteIndexAction()...)
+	// It took me a long time to figure *this* *specific* *order* of args to pass to exec.Command:
+	//     sh interpreter -> sh interpreter option '-c' -> cmd to exececute by shell interpreter
+	cmd := exec.Command("/bin/sh", "-c", logrunerCfg.renderForCuratorDeleteIndexAction())
 
 	debug.Printf("(deleteESIndex)  'cmd': %v\n", cmd.Args)
 	if err := d.Run(cmd); err != nil {
