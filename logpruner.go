@@ -205,7 +205,7 @@ func getCloudWatchAlarm(alarmName string) (string, error) {
 func deleteESIndex(logrunerCfg *LogprunerCfg) error {
 	d := deputy.Deputy{
 		Errors:  deputy.FromStderr,
-		Timeout: time.Second * 120,
+		Timeout: time.Second * 300,
 	}
 	cmd := exec.Command("curator", logrunerCfg.renderForCuratorDeleteIndexAction()...)
 
