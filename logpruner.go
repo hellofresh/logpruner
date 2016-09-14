@@ -10,6 +10,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 )
 
@@ -126,9 +127,10 @@ func incrStatsDCounterBy1(statsd *g2s.Statsd, counterName string) {
 }
 
 // Helper function spitting out the CLI syntax for ES curator.
-func (lpc LogprunerCfg) renderForCuratorDeleteIndexAction() string {
+func (lpc LogprunerCfg) renderForCuratorDeleteIndexAction() []string {
 	// curator --host ess-endpoint.live.hellofresh.io --port 82 delete indices --older-than 5 --time-unit days --timestring '%%Y.%%m.%d'
-	res := "curator "
+	//	res := "curator "
+	res := ""
 	res = res + fmt.Sprintf("--host %s --port %d",
 		lpc.Host,
 		lpc.Port)
@@ -142,7 +144,10 @@ func (lpc LogprunerCfg) renderForCuratorDeleteIndexAction() string {
 	}
 	res = res + fmt.Sprintf(" delete indices --older-than %d --time-unit days", lpc.OlderThanDays)
 	res = res + " " + "--timestring '%Y.%m.%d'"
-	return res
+	// Transform to be used as 'exec.Command' arg.
+	resSpltd := strings.Split(res, " ")
+	//	resTrnsfrmd := strings.Join(resSpltd, ",")
+	return resSpltd
 }
 
 // Helper function to retrieve the value of an OS environment variable. If not set or empty, return error.
@@ -185,21 +190,11 @@ func getCloudWatchAlarm(alarmName string) (string, error) {
 		Timeout: time.Second * 30,
 	}
 
-	cmd := exec.Command("docker",
-		"run",
-		"--rm",
-		"-e",
-		fmt.Sprintf("AWS_DEFAULT_REGION=%s", os.Getenv("AWS_DEFAULT_REGION")),
-		"-e",
-		fmt.Sprintf("AWS_ACCESS_KEY_ID=%s", os.Getenv("AWS_ACCESS_KEY_ID")),
-		"-e",
-		fmt.Sprintf("AWS_SECRET_ACCESS_KEY=%s", os.Getenv("AWS_SECRET_ACCESS_KEY")),
-		"-i",
-		DOCKER_IMAGE_TO_RUN,
-		// Because the ENTRYPOINT of the Docker image to run is already "/bin/sh" we only have to provide "-c" here
-		// to read the commands to execute from the command line.
-		"-c",
-		fmt.Sprintf("aws cloudwatch describe-alarms --alarm-names %s", alarmName))
+	cmd := exec.Command("aws",
+		"cloudwatch",
+		"describe-alarms",
+		"--alarm-names",
+		alarmName)
 	if err := d.Run(cmd); err != nil {
 		return "", fmt.Errorf("(getCloudWatchAlarm) >>  Error executing docker run cmd. Error: %s\n", err.Error())
 	}
@@ -212,21 +207,7 @@ func deleteESIndex(logrunerCfg *LogprunerCfg) error {
 		Errors:  deputy.FromStderr,
 		Timeout: time.Second * 120,
 	}
-	cmd := exec.Command("docker",
-		"run",
-		"--rm",
-		"-e",
-		fmt.Sprintf("AWS_DEFAULT_REGION=%s", os.Getenv("AWS_DEFAULT_REGION")),
-		"-e",
-		fmt.Sprintf("AWS_ACCESS_KEY_ID=%s", os.Getenv("AWS_ACCESS_KEY_ID")),
-		"-e",
-		fmt.Sprintf("AWS_SECRET_ACCESS_KEY=%s", os.Getenv("AWS_SECRET_ACCESS_KEY")),
-		"-i",
-		DOCKER_IMAGE_TO_RUN,
-		// Because the ENTRYPOINT of the Docker image to run is already "/bin/sh" we only have to provide "-c" here
-		// to read the commands to execute from the command line.
-		"-c",
-		logrunerCfg.renderForCuratorDeleteIndexAction())
+	cmd := exec.Command("curator", logrunerCfg.renderForCuratorDeleteIndexAction()...)
 
 	debug.Printf("(deleteESIndex)  'cmd': %v\n", cmd.Args)
 	if err := d.Run(cmd); err != nil {
@@ -279,14 +260,14 @@ func main() {
 						log.Printf(">>>  TRIGGERING DELETE OLD INDEXES ACTION for index '%s'  <<<", idxName)
 						if err := deleteESIndex(lpCfg); err != nil {
 							log.Printf("Could not delete old indexes for '%s' at host '%s', port %d. Error: %s\n", idxName, lpCfg.Host, lpCfg.Port, err.Error())
-							incrStatsDCounterBy1(statsd, "logpruner.error.cnt")
+							incrStatsDCounterBy1(statsd, "logpruner.error."+idxName)
 						} else {
 							log.Printf("Successfully deleted old indexes for '%s' at host '%s', port %d.\n", idxName, lpCfg.Host, lpCfg.Port)
-							incrStatsDCounterBy1(statsd, "logpruner.success.cnt")
+							incrStatsDCounterBy1(statsd, "logpruner.success."+idxName)
 						}
 					} else {
 						log.Printf("Nothing to do for '%s' at host '%s', port %d.\n", idxName, lpCfg.Host, lpCfg.Port)
-						incrStatsDCounterBy1(statsd, "logpruner.nothing.cnt")
+						incrStatsDCounterBy1(statsd, "logpruner.nothing."+idxName)
 					}
 				}
 
