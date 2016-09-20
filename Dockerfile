@@ -15,7 +15,7 @@ RUN apk add --update --no-cache \
     pip install awscli elasticsearch-curator==3.5.1
 
 # Put logpruner utility into place. Use GitHub release version.
-ADD ["https://github.com/hellofresh/logpruner/releases/download/v0.0.4/logpruner", "/usr/local/bin/logpruner"]
+ADD ["https://github.com/hellofresh/logpruner/releases/download/v0.0.5/logpruner", "/usr/local/bin/logpruner"]
 
 # Make sure logpruner is executable.
 RUN chmod +x /usr/local/bin/logpruner
